@@ -306,9 +306,9 @@ export class CosmWasmClient {
     }
 
     if (result.code) {
-      throw new Error(
+      throw Object.assign(new Error(
         `Error when posting tx ${result.txhash}. Code: ${result.code}; Raw log: ${result.raw_log}`,
-      );
+      ), { tx, result });
     }
 
     return {
