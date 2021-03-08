@@ -1,5 +1,5 @@
-import { StdSignature } from "./types";
 import { StdSignDoc } from "./encoding";
+import { StdSignature } from "./types";
 
 export type PrehashType = "sha256" | "sha512" | null;
 

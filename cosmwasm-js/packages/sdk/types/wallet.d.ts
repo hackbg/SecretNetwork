@@ -1,5 +1,5 @@
-import { StdSignature } from "./types";
 import { StdSignDoc } from "./encoding";
+import { StdSignature } from "./types";
 export declare type PrehashType = "sha256" | "sha512" | null;
 export declare type Algo = "secp256k1" | "ed25519" | "sr25519";
 export interface AccountData {

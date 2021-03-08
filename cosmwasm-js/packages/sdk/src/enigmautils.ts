@@ -1,6 +1,6 @@
 const miscreant = require("miscreant");
-import { sharedKey as x25519, generateKeyPair } from "curve25519-js";
 import { Encoding } from "@iov/encoding";
+import { generateKeyPair, sharedKey as x25519 } from "curve25519-js";
 const secureRandom = require("secure-random");
 import axios from "axios";
 const hkdf = require("js-crypto-hkdf");

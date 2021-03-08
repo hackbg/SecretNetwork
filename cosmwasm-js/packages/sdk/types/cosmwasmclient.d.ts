@@ -1,5 +1,7 @@
+/// <reference types="node" />
+import { SecretJSError } from "./error";
 import { Log } from "./logs";
-import { BroadcastMode, RestClient } from "./restclient";
+import { BroadcastMode, PostTxsResponse, RestClient } from "./restclient";
 import { Coin, CosmosSdkTx, JsonObject, PubKey, StdTx } from "./types";
 export interface GetNonceResult {
   readonly accountNumber: number;
@@ -110,6 +112,100 @@ export interface Block {
 export interface PrivateCosmWasmClient {
   readonly restClient: RestClient;
 }
+export declare class CosmWasmClientError extends SecretJSError {}
+export declare const CosmWasmClientErrors: {
+  ChainIDEmpty: {
+    new (): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  AccountDoesNotExist: {
+    new (address: string): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  UnknownQueryType: {
+    new (): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  IllFormattedTXHash: {
+    new (txhash: string): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  PostTXError: {
+    new (tx: StdTx, response: PostTxsResponse): {
+      decrypt(decryptor: import("./enigmautils").SecretUtils, nonce: Uint8Array): Promise<string>;
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    MessageNotFound: {
+      new (otherMessage: string): {
+        name: string;
+        message: string;
+        stack?: string | undefined;
+      };
+      captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+      prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+      stackTraceLimit: number;
+    };
+    FailedToDecrypt: {
+      new (encrypted: string, decryptionError: Error): {
+        name: string;
+        message: string;
+        stack?: string | undefined;
+      };
+      captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+      prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+      stackTraceLimit: number;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  NoContractFound: {
+    new (address: string): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  TooManyResults: {
+    new (total: string, limit: number): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+};
 export declare class CosmWasmClient {
   protected readonly restClient: RestClient;
   /** Any address the chain considers valid (valid bech32 with proper prefix) */
@@ -148,7 +244,7 @@ export declare class CosmWasmClient {
    */
   getBlock(height?: number): Promise<Block>;
   searchTx(query: SearchTxQuery, filter?: SearchTxFilter): Promise<readonly IndexedTx[]>;
-  postTx(tx: StdTx): Promise<PostTxResult>;
+  postTx(tx: StdTx, nonce?: Uint8Array): Promise<PostTxResult>;
   getCodes(): Promise<readonly Code[]>;
   getCodeDetails(codeId: number): Promise<CodeDetails>;
   getContracts(codeId: number): Promise<readonly Contract[]>;

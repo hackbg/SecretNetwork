@@ -1,19 +1,26 @@
 import { Encoding, isNonNullObject } from "@iov/encoding";
 import axios, { AxiosError, AxiosInstance } from "axios";
-import { Log, Attribute } from "./logs";
+
+import EnigmaUtils, { SecretUtils } from "./enigmautils";
+import {
+  decryptErrorMessage,
+  containsEncryptedErrorMessage,
+  extractEncryptedErrorMessage,
+  SecretJSError
+} from "./error";
+import { Attribute, Log } from "./logs";
 import {
   Coin,
-  Msg,
   CosmosSdkTx,
   JsonObject,
   Model,
+  Msg,
+  MsgExecuteContract,
+  MsgInstantiateContract,
   parseWasmData,
   StdTx,
   WasmData,
-  MsgInstantiateContract,
-  MsgExecuteContract,
 } from "./types";
-import EnigmaUtils, {SecretUtils} from "./enigmautils";
 
 export interface CosmosSdkAccount {
   /** Bech32 account address */
@@ -281,12 +288,28 @@ function parseAxiosError(err: AxiosError): never {
   }
 }
 
+export class RESTClientError extends SecretJSError {}
+
+export const RESTClientErrors = {
+  NullResponse: class extends SecretJSError {
+    constructor() {
+      super("Received null response from server");
+    }
+  },
+
+  UnexpectedResponse: class extends SecretJSError {
+    constructor() {
+      super("Unexpected response data format");
+    }
+  },
+};
+
 export class RestClient {
   private readonly client: AxiosInstance;
   private readonly broadcastMode: BroadcastMode;
   public enigmautils: SecretUtils;
 
-  private codeHashCache: Map<any, string>;
+  private readonly codeHashCache: Map<any, string>;
 
   /**
    * Creates a new client to interact with a Cosmos SDK light client daemon.
@@ -316,7 +339,7 @@ export class RestClient {
   public async get(path: string): Promise<RestClientResponse> {
     const { data } = await this.client.get(path).catch(parseAxiosError);
     if (data === null) {
-      throw new Error("Received null response from server");
+      throw new RESTClientErrors.NullResponse();
     }
     return data;
   }
@@ -325,7 +348,7 @@ export class RestClient {
     if (!isNonNullObject(params)) throw new Error("Got unexpected type of params. Expected object.");
     const { data } = await this.client.post(path, params).catch(parseAxiosError);
     if (data === null) {
-      throw new Error("Received null response from server");
+      throw new RESTClientErrors.NullResponse();
     }
     return data;
   }
@@ -335,7 +358,7 @@ export class RestClient {
     const path = `/auth/accounts/${address}`;
     const responseData = await this.get(path);
     if ((responseData as any).result.type !== "cosmos-sdk/Account") {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return responseData as AuthAccountsResponse;
   }
@@ -344,7 +367,7 @@ export class RestClient {
   public async blocksLatest(): Promise<BlockResponse> {
     const responseData = await this.get("/blocks/latest");
     if (!(responseData as any).block) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return responseData as BlockResponse;
   }
@@ -352,7 +375,7 @@ export class RestClient {
   public async blocks(height: number): Promise<BlockResponse> {
     const responseData = await this.get(`/blocks/${height}`);
     if (!(responseData as any).block) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return responseData as BlockResponse;
   }
@@ -361,7 +384,7 @@ export class RestClient {
   public async nodeInfo(): Promise<NodeInfoResponse> {
     const responseData = await this.get("/node_info");
     if (!(responseData as any).node_info) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return responseData as NodeInfoResponse;
   }
@@ -370,7 +393,7 @@ export class RestClient {
   public async txById(id: string): Promise<TxsResponse> {
     const responseData = await this.get(`/txs/${id}`);
     if (!(responseData as any).tx) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
 
     return this.decryptTxsResponse(responseData as TxsResponse);
@@ -379,7 +402,7 @@ export class RestClient {
   public async txsQuery(query: string): Promise<SearchTxsResponse> {
     const responseData = await this.get(`/txs?${query}`);
     if (!(responseData as any).txs) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
 
     const resp = responseData as SearchTxsResponse;
@@ -395,7 +418,7 @@ export class RestClient {
   public async encodeTx(tx: CosmosSdkTx): Promise<Uint8Array> {
     const responseData = await this.post("/txs/encode", tx);
     if (!(responseData as any).tx) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return Encoding.fromBase64((responseData as EncodeTxResponse).tx);
   }
@@ -414,7 +437,7 @@ export class RestClient {
     };
     const responseData = await this.post("/txs", params);
     if (!(responseData as any).txhash) {
-      throw new Error("Unexpected response data format");
+      throw new RESTClientErrors.UnexpectedResponse();
     }
     return responseData as PostTxsResponse;
   }
@@ -591,55 +614,60 @@ export class RestClient {
   }
 
   public async decryptTxsResponse(txsResponse: TxsResponse): Promise<TxsResponse> {
-    if (txsResponse.tx.value.msg.length === 1) {
-      const msg: Msg = txsResponse.tx.value.msg[0];
 
-      let inputMsgEncrypted: Uint8Array;
-      if (msg.type === "wasm/MsgExecuteContract") {
-        inputMsgEncrypted = Encoding.fromBase64((msg as MsgExecuteContract).value.msg);
-      } else if (msg.type === "wasm/MsgInstantiateContract") {
-        inputMsgEncrypted = Encoding.fromBase64((msg as MsgInstantiateContract).value.init_msg);
-      } else {
-        return txsResponse;
-      }
+    if (txsResponse.tx.value.msg.length !== 1) {
+      console.warn('decryptTxsResponse: txsResponse.tx.value.msg.length !== 1; not decrypting')
+      return txsResponse
+    }
 
-      const inputMsgPubkey = inputMsgEncrypted.slice(32, 64);
-      if (Encoding.toBase64(await this.enigmautils.getPubkey()) === Encoding.toBase64(inputMsgPubkey)) {
-        // my pubkey, can decrypt
-        const nonce = inputMsgEncrypted.slice(0, 32);
+    const msg: Msg = txsResponse.tx.value.msg[0];
 
-        // decrypt input
-        const inputMsg = Encoding.fromUtf8(
-          await this.enigmautils.decrypt(inputMsgEncrypted.slice(64), nonce),
-        );
+    let inputMsgEncrypted: Uint8Array;
+    if (msg.type === "wasm/MsgExecuteContract") {
+      inputMsgEncrypted = Encoding.fromBase64((msg as MsgExecuteContract).value.msg);
+    } else if (msg.type === "wasm/MsgInstantiateContract") {
+      inputMsgEncrypted = Encoding.fromBase64((msg as MsgInstantiateContract).value.init_msg);
+    } else {
+      console.warn('decryptTxsResponse: not wasm/MsgExecuteContract or wasm/MsgInstantiateContract; not decrypting')
+      return txsResponse;
+    }
 
-        if (msg.type === "wasm/MsgExecuteContract") {
-          (txsResponse.tx.value.msg[0] as MsgExecuteContract).value.msg = inputMsg;
-        } else if (msg.type === "wasm/MsgInstantiateContract") {
-          (txsResponse.tx.value.msg[0] as MsgInstantiateContract).value.init_msg = inputMsg;
-        }
+    const inputMsgPubkey = inputMsgEncrypted.slice(32, 64);
+    const authorized =
+      Encoding.toBase64(await this.enigmautils.getPubkey()) ===
+      Encoding.toBase64(inputMsgPubkey)
+    if (!authorized) {
+      console.warn('decryptTxsResponse: not authorized; not decrypting')
+      return txsResponse
+    }
 
-        // decrypt output
-        txsResponse.data = await this.decryptDataField(txsResponse.data, nonce);
-        let logs;
-        if (txsResponse.logs) {
-          logs = await this.decryptLogs(txsResponse.logs, nonce);
-          txsResponse = Object.assign({}, txsResponse, { logs: logs });
-        }
-
-        // decrypt error
-        const errorMessageRgx = /contract failed: encrypted: (.+?): failed to execute message; message index: 0/g;
-
-        const rgxMatches = errorMessageRgx.exec(txsResponse.raw_log);
-        if (Array.isArray(rgxMatches) && rgxMatches.length === 2) {
-          const errorCipherB64 = rgxMatches[1];
-          const errorCipherBz = Encoding.fromBase64(errorCipherB64);
-
-          const errorPlainBz = await this.enigmautils.decrypt(errorCipherBz, nonce);
-
-          txsResponse.raw_log = txsResponse.raw_log.replace(errorCipherB64, Encoding.fromUtf8(errorPlainBz));
-        }
-      }
+    // my pubkey, can decrypt
+    const nonce = inputMsgEncrypted.slice(0, 32);
+    // decrypt input
+    const inputMsg = Encoding.fromUtf8(
+      await this.enigmautils.decrypt(inputMsgEncrypted.slice(64), nonce),
+    );
+    if (msg.type === "wasm/MsgExecuteContract") {
+      (txsResponse.tx.value.msg[0] as MsgExecuteContract).value.msg = inputMsg;
+    } else if (msg.type === "wasm/MsgInstantiateContract") {
+      // eslint-disable-next-line @typescript-eslint/camelcase
+      (txsResponse.tx.value.msg[0] as MsgInstantiateContract).value.init_msg = inputMsg;
+    }
+    // decrypt output
+    txsResponse.data = await this.decryptDataField(txsResponse.data, nonce);
+    let logs;
+    if (txsResponse.logs) {
+      console.debug('decryptTxsResponse: decrypting logs')
+      logs = await this.decryptLogs(txsResponse.logs, nonce);
+      txsResponse = Object.assign({}, txsResponse, { logs: logs });
+    }
+    // decrypt error
+    if (containsEncryptedErrorMessage(txsResponse.raw_log)) {
+      console.debug('decryptTxsResponse: decrypting error')
+      const errorCipher = extractEncryptedErrorMessage(txsResponse.raw_log);
+      const errorPlain = await decryptErrorMessage(this.enigmautils, errorCipher, nonce);
+      // eslint-disable-next-line @typescript-eslint/camelcase
+      txsResponse.raw_log = txsResponse.raw_log.replace(errorCipher.toString(), errorPlain);
     }
     return txsResponse;
   }

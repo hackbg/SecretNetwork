@@ -6,6 +6,7 @@ import { isValidBuilder } from "./builder";
 import { Account, CosmWasmClient, GetNonceResult, PostTxResult } from "./cosmwasmclient";
 import { makeSignBytes } from "./encoding";
 import { SecretUtils } from "./enigmautils";
+import { EncryptedSecretJSError, SecretJSError } from "./error";
 import { findAttribute, Log } from "./logs";
 import { BroadcastMode } from "./restclient";
 import {
@@ -36,11 +37,21 @@ function singleAmount(amount: number, denom: string): readonly Coin[] {
   return [{ amount: amount.toString(), denom: denom }];
 }
 
+export class SigningCosmWasmClientError extends SecretJSError {}
+
+export const SigningCosmWasmClientErrors = {
+  InvalidBuilder: class extends SecretJSError {
+    constructor() {
+      super("The builder (Docker Hub image with tag) is not valid");
+    }
+  },
+};
+
 function prepareBuilder(buider: string | undefined): string {
   if (buider === undefined) {
     return ""; // normalization needed by backend
   } else {
-    if (!isValidBuilder(buider)) throw new Error("The builder (Docker Hub image with tag) is not valid");
+    if (!isValidBuilder(buider)) throw new SigningCosmWasmClientErrors.InvalidBuilder();
     return buider;
   }
 }
@@ -137,7 +148,7 @@ export class SigningCosmWasmClient extends CosmWasmClient {
 
     this.anyValidAddress = senderAddress;
     this.senderAddress = senderAddress;
-    //this.signCallback = signCallback ? signCallback : undefined;
+    // this.signCallback = signCallback ? signCallback : undefined;
     this.signer = signer;
     if (seedOrEnigmaUtils && !(seedOrEnigmaUtils instanceof Uint8Array)) {
       this.restClient.enigmautils = seedOrEnigmaUtils;
@@ -164,7 +175,9 @@ export class SigningCosmWasmClient extends CosmWasmClient {
     // offline signer interface
     if ("sign" in this.signer) {
       const signResponse = await this.signer.sign(this.senderAddress, {
+        // eslint-disable-next-line @typescript-eslint/camelcase
         chain_id: chainId,
+        // eslint-disable-next-line @typescript-eslint/camelcase
         account_number: String(accountNumber),
         sequence: String(sequence),
         fee: fee,
@@ -254,14 +267,10 @@ export class SigningCosmWasmClient extends CosmWasmClient {
     const { accountNumber, sequence } = await this.getNonce();
     const chainId = await this.getChainId();
     const signedTx = await this.signAdapter([instantiateMsg], fee, chainId, memo, accountNumber, sequence);
-
     const result = await this.postTx(signedTx);
     const contractAddressAttr = findAttribute(result.logs, "message", "contract_address");
-
     const nonce = Encoding.fromBase64(instantiateMsg.value.init_msg).slice(0, 32);
-
     const logs = await this.restClient.decryptLogs(result.logs, nonce);
-
     return {
       contractAddress: contractAddressAttr.value,
       logs: logs,
@@ -277,12 +286,12 @@ export class SigningCosmWasmClient extends CosmWasmClient {
     transferAmount?: readonly Coin[],
   ): Promise<ExecuteResult> {
     const contractCodeHash = await this.restClient.getCodeHashByContractAddr(contractAddress);
-
     const executeMsg: MsgExecuteContract = {
       type: "wasm/MsgExecuteContract",
       value: {
         sender: this.senderAddress,
         contract: contractAddress,
+        // eslint-disable-next-line @typescript-eslint/camelcase
         callback_code_hash: "",
         msg: Encoding.toBase64(await this.restClient.enigmautils.encrypt(contractCodeHash, handleMsg)),
         // eslint-disable-next-line @typescript-eslint/camelcase
@@ -291,34 +300,19 @@ export class SigningCosmWasmClient extends CosmWasmClient {
         callback_sig: null,
       },
     };
-    const fee = this.fees.exec;
     const { accountNumber, sequence } = await this.getNonce();
+    const fee = this.fees.exec;
     const chainId = await this.getChainId();
     const signedTx = await this.signAdapter([executeMsg], fee, chainId, memo, accountNumber, sequence);
-
     const nonce = Encoding.fromBase64(executeMsg.value.msg).slice(0, 32);
     let result;
     try {
-      result = await this.postTx(signedTx);
-    } catch (err) {
-      try {
-        const errorMessageRgx = /contract failed: encrypted: (.+?): failed to execute message; message index: 0/g;
-        const rgxMatches = errorMessageRgx.exec(err.message);
-        if (rgxMatches == null || rgxMatches.length != 2) {
-          throw err;
-        }
-        const errorCipherB64 = rgxMatches[1];
-        const errorCipherBz = Encoding.fromBase64(errorCipherB64);
-        const errorPlainBz = await this.restClient.enigmautils.decrypt(errorCipherBz, nonce);
-        err.log = Encoding.fromUtf8(errorPlainBz)
-        err.message = err.message.replace(errorCipherB64, err.log);
-      } catch (decryptionError) {
-        throw new Error(
-          `Failed to decrypt the following error message: ${err.message}. Decryption error of the error message: ${decryptionError.message}`,
-        );
+      result = await this.postTx(signedTx, nonce);
+    } catch (error) {
+      if (error instanceof EncryptedSecretJSError) {
+        await error.decrypt(this.restClient.enigmautils, nonce);
       }
-
-      throw err;
+      throw error;
     }
 
     const data = await this.restClient.decryptDataField(result.data, nonce);

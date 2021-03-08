@@ -1,9 +1,10 @@
 import { Sha256 } from "@iov/crypto";
 import { Encoding } from "@iov/encoding";
 
+import { EncryptedSecretJSError, SecretJSError } from "./error";
 import { Log, parseLogs } from "./logs";
 import { decodeBech32Pubkey } from "./pubkey";
-import { BroadcastMode, RestClient } from "./restclient";
+import { BroadcastMode, PostTxsResponse, RestClient } from "./restclient";
 import { Coin, CosmosSdkTx, JsonObject, PubKey, StdTx } from "./types";
 
 export interface GetNonceResult {
@@ -145,6 +146,69 @@ export interface PrivateCosmWasmClient {
   readonly restClient: RestClient;
 }
 
+export class CosmWasmClientError extends SecretJSError {}
+
+export const CosmWasmClientErrors = {
+  ChainIDEmpty: class extends SecretJSError {
+    constructor() {
+      super("Chain ID must not be empty");
+    }
+  },
+
+  AccountDoesNotExist: class extends SecretJSError {
+    constructor(address: string) {
+      super(
+        `Account ${address} does not exist on chain. ` +
+          `Send some tokens there before trying to query nonces.`,
+        { address },
+      );
+      // Is the API consumer necessarily aware they're "querying nonces"
+      // if they're not calling `CosmWasmClient#getNonce` directly?
+      // That smells like a leaky abstraction,
+      // maybe just leave the first half of the message?
+    }
+  },
+
+  UnknownQueryType: class extends SecretJSError {
+    constructor() {
+      super("Unknown query type");
+    }
+  },
+
+  IllFormattedTXHash: class extends SecretJSError {
+    constructor(txhash: string) {
+      super(`Received ill-formatted txhash. Must be non-empty upper-case hex, got: ${txhash}`, { txhash });
+    }
+  },
+
+  PostTXError: class extends EncryptedSecretJSError {
+    constructor(tx: StdTx, response: PostTxsResponse) {
+      super(
+        `Error when posting tx ${response.txhash}. ` +
+          `Code: ${response.code}; ` +
+          `Raw log: ${response.raw_log}`,
+        { tx, response },
+      );
+    }
+  },
+
+  NoContractFound: class extends SecretJSError {
+    constructor(address: string) {
+      super(`No contract found at address "${address}"`, { address });
+    }
+  },
+
+  TooManyResults: class extends SecretJSError {
+    constructor(total: string, limit: number) {
+      super(
+        `Found more results on the backend than we can process currently.` +
+          ` Results: ${total}, supported: ${limit}`,
+        { total, limit },
+      );
+    }
+  },
+};
+
 export class CosmWasmClient {
   protected readonly restClient: RestClient;
   /** Any address the chain considers valid (valid bech32 with proper prefix) */
@@ -170,7 +234,7 @@ export class CosmWasmClient {
     if (!this.chainId) {
       const response = await this.restClient.nodeInfo();
       const chainId = response.node_info.network;
-      if (!chainId) throw new Error("Chain ID must not be empty");
+      if (!chainId) throw new CosmWasmClientErrors.ChainIDEmpty();
       this.chainId = chainId;
     }
 
@@ -209,9 +273,7 @@ export class CosmWasmClient {
   public async getNonce(address: string): Promise<GetNonceResult> {
     const account = await this.getAccount(address);
     if (!account) {
-      throw new Error(
-        "Account does not exist on chain. Send some tokens there before trying to query nonces.",
-      );
+      throw new CosmWasmClientErrors.AccountDoesNotExist(address);
     }
     return {
       accountNumber: account.accountNumber,
@@ -290,7 +352,7 @@ export class CosmWasmClient {
       const rawQuery = withFilters(query.tags.map((t) => `${t.key}=${t.value}`).join("&"));
       txs = await this.txsQuery(rawQuery);
     } else {
-      throw new Error("Unknown query type");
+      throw new CosmWasmClientErrors.UnknownQueryType();
     }
 
     // backend sometimes messes up with min/max height filtering
@@ -299,23 +361,26 @@ export class CosmWasmClient {
     return filtered;
   }
 
-  public async postTx(tx: StdTx): Promise<PostTxResult> {
-    const result = await this.restClient.postTx(tx);
-    if (!result.txhash.match(/^([0-9A-F][0-9A-F])+$/)) {
-      throw new Error("Received ill-formatted txhash. Must be non-empty upper-case hex");
+  public async postTx(tx: StdTx, nonce?: Uint8Array): Promise<PostTxResult> {
+    const response = await this.restClient.postTx(tx);
+    if (!response.txhash.match(/^([0-9A-F][0-9A-F])+$/)) {
+      throw new CosmWasmClientErrors.IllFormattedTXHash(response.txhash);
     }
-
-    if (result.code) {
-      throw Object.assign(new Error(
-        `Error when posting tx ${result.txhash}. Code: ${result.code}; Raw log: ${result.raw_log}`,
-      ), { tx, result });
+    if (response.code) {
+      const error = new CosmWasmClientErrors.PostTXError(tx, response);
+      if (nonce) {
+          console.debug('postTx with nonce, decrypting error')
+          await error.decrypt(this.restClient.enigmautils, nonce);
+      } else {
+          console.warn('postTx without nonce, cant decrypt the following error')
+      }
+      throw error;
     }
-
     return {
-      logs: result.logs ? parseLogs(result.logs) : [],
-      rawLog: result.raw_log || "",
-      transactionHash: result.txhash,
-      data: result.data || "",
+      logs: response.logs ? parseLogs(response.logs) : [],
+      rawLog: response.raw_log || "",
+      transactionHash: response.txhash,
+      data: response.data || "",
     };
   }
 
@@ -369,7 +434,7 @@ export class CosmWasmClient {
    */
   public async getContract(address: string): Promise<ContractDetails> {
     const result = await this.restClient.getContractInfo(address);
-    if (!result) throw new Error(`No contract found at address "${address}"`);
+    if (!result) throw new CosmWasmClientErrors.NoContractFound(address);
     return {
       address: result.address,
       codeId: result.code_id,
@@ -405,7 +470,7 @@ export class CosmWasmClient {
     } catch (error) {
       if (error instanceof Error) {
         if (error.message.startsWith("not found: contract")) {
-          throw new Error(`No contract found at address "${address}"`);
+          throw new CosmWasmClientErrors.NoContractFound(address);
         } else {
           throw error;
         }
@@ -420,11 +485,7 @@ export class CosmWasmClient {
     const limit = 100;
     const result = await this.restClient.txsQuery(`${query}&limit=${limit}`);
     const pages = parseInt(result.page_total, 10);
-    if (pages > 1) {
-      throw new Error(
-        `Found more results on the backend than we can process currently. Results: ${result.total_count}, supported: ${limit}`,
-      );
-    }
+    if (pages > 1) throw new CosmWasmClientErrors.TooManyResults(result.total_count, limit);
     return result.txs.map(
       (restItem): IndexedTx => ({
         height: parseInt(restItem.height, 10),

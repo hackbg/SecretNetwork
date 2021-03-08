@@ -1,5 +1,7 @@
+/// <reference types="node" />
 import { Account, CosmWasmClient, GetNonceResult, PostTxResult } from "./cosmwasmclient";
 import { SecretUtils } from "./enigmautils";
+import { SecretJSError } from "./error";
 import { Log } from "./logs";
 import { BroadcastMode } from "./restclient";
 import { Coin, Msg, StdFee, StdSignature, StdTx } from "./types";
@@ -13,6 +15,19 @@ export interface FeeTable {
   readonly exec: StdFee;
   readonly send: StdFee;
 }
+export declare class SigningCosmWasmClientError extends SecretJSError {}
+export declare const SigningCosmWasmClientErrors: {
+  InvalidBuilder: {
+    new (): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+};
 export interface UploadMeta {
   /** The source URL */
   readonly source?: string;

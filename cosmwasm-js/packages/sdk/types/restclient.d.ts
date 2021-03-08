@@ -1,6 +1,8 @@
+/// <reference types="node" />
+import { SecretUtils } from "./enigmautils";
+import { SecretJSError } from "./error";
 import { Log } from "./logs";
 import { Coin, CosmosSdkTx, JsonObject, Model, StdTx } from "./types";
-import { SecretUtils } from "./enigmautils";
 export interface CosmosSdkAccount {
   /** Bech32 account address */
   readonly address: string;
@@ -188,11 +190,34 @@ export declare enum BroadcastMode {
   /** Return right away */
   Async = "async",
 }
+export declare class RESTClientError extends SecretJSError {}
+export declare const RESTClientErrors: {
+  NullResponse: {
+    new (): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+  UnexpectedResponse: {
+    new (): {
+      name: string;
+      message: string;
+      stack?: string | undefined;
+    };
+    captureStackTrace(targetObject: object, constructorOpt?: Function | undefined): void;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    stackTraceLimit: number;
+  };
+};
 export declare class RestClient {
   private readonly client;
   private readonly broadcastMode;
   enigmautils: SecretUtils;
-  private codeHashCache;
+  private readonly codeHashCache;
   /**
    * Creates a new client to interact with a Cosmos SDK light client daemon.
    * This class tries to be a direct mapping onto the API. Some basic decoding and normalizatin is done
