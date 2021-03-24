@@ -19,12 +19,12 @@ export function containsEncryptedErrorMessage(message: string): boolean {
   return RE_ERR.test(message);
 }
 
-export function extractEncryptedErrorMessage(message: string): string {
+export function extractEncryptedErrorMessage(message: string, error?: Error): string {
   const rgxMatches = RE_ERR.exec(message);
   if (Array.isArray(rgxMatches) && rgxMatches.length === 2) {
     return rgxMatches[1]; // errorCipherB64
   } else {
-    throw new EncryptedSecretJSError.MessageNotFound(message);
+    throw new EncryptedSecretJSError.MessageNotFound(message, error);
   }
 }
 
@@ -50,7 +50,7 @@ export async function decryptErrorMessage(
 
 export class EncryptedSecretJSError extends SecretJSError {
   async decrypt(decryptor: SecretUtils, nonce: Uint8Array): Promise<string> {
-    const encrypted = extractEncryptedErrorMessage(this.message);
+    const encrypted = extractEncryptedErrorMessage(this.message, this);
     const decrypted = await decryptErrorMessage(decryptor, encrypted, nonce);
     this.message.replace(encrypted, decrypted);
     Object.assign(this, { log: decrypted });
@@ -58,9 +58,9 @@ export class EncryptedSecretJSError extends SecretJSError {
   }
 
   static MessageNotFound = class EncryptedMessageNotFound extends SecretJSError {
-    constructor(otherMessage: string) {
+    constructor(otherMessage: string, otherError?: Error) {
       super(`Failed to extract an encrypted error from the following message:\n  ` + otherMessage, {
-        otherMessage,
+        otherError,
       });
     }
   };

@@ -162,7 +162,7 @@ export declare const CosmWasmClientErrors: {
       stack?: string | undefined;
     };
     MessageNotFound: {
-      new (otherMessage: string): {
+      new (otherMessage: string, otherError?: Error | undefined): {
         name: string;
         message: string;
         stack?: string | undefined;

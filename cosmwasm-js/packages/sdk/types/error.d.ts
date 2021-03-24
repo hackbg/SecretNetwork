@@ -7,7 +7,7 @@ export declare class SecretJSError extends Error {
   );
 }
 export declare function containsEncryptedErrorMessage(message: string): boolean;
-export declare function extractEncryptedErrorMessage(message: string): string;
+export declare function extractEncryptedErrorMessage(message: string, error?: Error): string;
 export declare function decryptB64asUTF8(
   decryptor: SecretUtils,
   encrypted: string,
@@ -21,7 +21,7 @@ export declare function decryptErrorMessage(
 export declare class EncryptedSecretJSError extends SecretJSError {
   decrypt(decryptor: SecretUtils, nonce: Uint8Array): Promise<string>;
   static MessageNotFound: {
-    new (otherMessage: string): {
+    new (otherMessage: string, otherError?: Error | undefined): {
       name: string;
       message: string;
       stack?: string | undefined;
