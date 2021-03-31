@@ -372,7 +372,7 @@ export class CosmWasmClient {
           console.debug('postTx with nonce, decrypting error')
           await error.decrypt(this.restClient.enigmautils, nonce);
       } else {
-          console.warn('postTx without nonce, cant decrypt the following error')
+          console.warn('postTx without nonce, can not decrypt the following error')
       }
       throw error;
     }

@@ -267,9 +267,9 @@ export class SigningCosmWasmClient extends CosmWasmClient {
     const { accountNumber, sequence } = await this.getNonce();
     const chainId = await this.getChainId();
     const signedTx = await this.signAdapter([instantiateMsg], fee, chainId, memo, accountNumber, sequence);
-    const result = await this.postTx(signedTx);
-    const contractAddressAttr = findAttribute(result.logs, "message", "contract_address");
     const nonce = Encoding.fromBase64(instantiateMsg.value.init_msg).slice(0, 32);
+    const result = await this.postTx(signedTx, nonce);
+    const contractAddressAttr = findAttribute(result.logs, "message", "contract_address");
     const logs = await this.restClient.decryptLogs(result.logs, nonce);
     return {
       contractAddress: contractAddressAttr.value,
