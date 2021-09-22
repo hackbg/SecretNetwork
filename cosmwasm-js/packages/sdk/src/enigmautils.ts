@@ -1,9 +1,9 @@
-const miscreant = require("miscreant");
+import miscreant from "miscreant";
 import { Encoding } from "@iov/encoding";
 import { generateKeyPair, sharedKey as x25519 } from "curve25519-js";
-const secureRandom = require("secure-random");
+import secureRandom from "secure-random";
 import axios from "axios";
-const hkdf = require("js-crypto-hkdf");
+import hkdf from "js-crypto-hkdf";
 
 const cryptoProvider = new miscreant.PolyfillCryptoProvider();
 
@@ -148,5 +148,3 @@ export default class EnigmaUtils implements SecretUtils {
     return Promise.resolve(this.pubkey);
   }
 }
-
-module.exports = EnigmaUtils;
