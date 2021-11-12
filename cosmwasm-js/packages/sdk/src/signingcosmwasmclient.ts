@@ -258,6 +258,10 @@ export class SigningCosmWasmClient extends CosmWasmClient {
       this.restClient.codeHashCache.set(codeId, contractCodeHash);
     }
 
+    if (!memo) {
+      memo = "";
+    }
+
     const instantiateMsg: MsgInstantiateContract = {
       type: "wasm/MsgInstantiateContract",
       value: {
@@ -302,12 +306,15 @@ export class SigningCosmWasmClient extends CosmWasmClient {
       throw err;
     }
 
-    const contractAddressAttr = findAttribute(result.logs, "message", "contract_address");
+    let contractAddress = "";
+    if (this.restClient.broadcastMode == BroadcastMode.Block) {
+      contractAddress = findAttribute(result.logs, "message", "contract_address")?.value;
+    }
 
     const logs = await this.restClient.decryptLogs(result.logs, [nonce]);
 
     return {
-      contractAddress: contractAddressAttr.value,
+      contractAddress,
       logs: logs,
       transactionHash: result.transactionHash,
       data: result.data, // data is the address of the new contract, so nothing to decrypt
@@ -324,6 +331,10 @@ export class SigningCosmWasmClient extends CosmWasmClient {
     memo: string = "",
     totalFee?: StdFee,
   ): Promise<ExecuteResult> {
+    if (!memo) {
+      memo = "";
+    }
+
     const msgs: Array<MsgExecuteContract> = [];
     for (const inputMsg of inputMsgs) {
       let { contractCodeHash } = inputMsg;
@@ -423,6 +434,10 @@ export class SigningCosmWasmClient extends CosmWasmClient {
       this.restClient.codeHashCache.set(contractAddress, contractCodeHash);
     }
 
+    if (!memo) {
+      memo = "";
+    }
+
     const executeMsg: MsgExecuteContract = {
       type: "wasm/MsgExecuteContract",
       value: {
@@ -506,6 +521,11 @@ export class SigningCosmWasmClient extends CosmWasmClient {
         amount: transferAmount,
       },
     };
+
+    if (!memo) {
+      memo = "";
+    }
+
     const { accountNumber, sequence } = await this.getNonce();
     const chainId = await this.getChainId();
     const signedTx = await this.signAdapter([sendMsg], fee, chainId, memo, accountNumber, sequence);

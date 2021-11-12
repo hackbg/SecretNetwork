@@ -44,6 +44,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+	secretlegacy "github.com/enigmampc/SecretNetwork/app/legacy"
 )
 
 // thanks @terra-project for this fix
@@ -100,8 +101,11 @@ func NewRootCmd() (*cobra.Command, app.EncodingConfig) {
 			cmd.SetOut(cmd.OutOrStdout())
 			cmd.SetErr(cmd.ErrOrStderr())
 
-			initClientCtx = client.ReadHomeFlag(initClientCtx, cmd)
-			initClientCtx, err := clientconfig.ReadFromClientConfig(initClientCtx)
+			initClientCtx, err := client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
+			if err != nil {
+				return err
+			}
+			initClientCtx, err = clientconfig.ReadFromClientConfig(initClientCtx)
 
 			if err != nil {
 				return err
@@ -153,7 +157,7 @@ func initRootCmd(rootCmd *cobra.Command, encodingConfig app.EncodingConfig) {
 		genutilcli.InitCmd(app.ModuleBasics(), app.DefaultNodeHome),
 		//updateTmParamsAndInit(app.ModuleBasics(), app.DefaultNodeHome),
 		genutilcli.CollectGenTxsCmd(banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome),
-		genutilcli.MigrateGenesisCmd(),
+		secretlegacy.MigrateGenesisCmd(),
 		genutilcli.GenTxCmd(app.ModuleBasics(), encodingConfig.TxConfig, banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome),
 		genutilcli.ValidateGenesisCmd(app.ModuleBasics()),
 		AddGenesisAccountCmd(app.DefaultNodeHome),
@@ -175,6 +179,7 @@ func initRootCmd(rootCmd *cobra.Command, encodingConfig app.EncodingConfig) {
 		ConfigureSecret(),
 		HealthCheck(),
 		ResetEnclave(),
+		AutoRegisterNode(),
 		keys.Commands(app.DefaultNodeHome),
 		clientconfig.Cmd(),
 	)

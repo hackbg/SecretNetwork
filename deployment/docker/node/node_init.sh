@@ -37,7 +37,7 @@ then
 
   sed -i 's/persistent_peers = ""/persistent_peers = "'"$PERSISTENT_PEERS"'"/g' ~/.secretd/config/config.toml
   echo "Set persistent_peers: $PERSISTENT_PEERS"
-  
+
   # Open RPC port to all interfaces
   perl -i -pe 's/laddr = .+?26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' ~/.secretd/config/config.toml
 
@@ -49,11 +49,11 @@ then
 
   secretd init-enclave
 
-  PUBLIC_KEY=$(secretd parse attestation_cert.der 2> /dev/null | cut -c 3- )
+  PUBLIC_KEY=$(secretd parse /opt/secret/.sgx_secrets/attestation_cert.der 2> /dev/null | cut -c 3- )
 
-  echo "Public key: $(secretd parse attestation_cert.der 2> /dev/null | cut -c 3- )"
+  echo "Public key: $(secretd parse /opt/secret/.sgx_secrets/attestation_cert.der 2> /dev/null | cut -c 3- )"
 
-  cp attestation_cert.der /root/.secretd/config/
+  cp /opt/secret/.sgx_secrets/attestation_cert.der /root/.secretd/config/
 
   openssl base64 -A -in attestation_cert.der -out b64_cert
   # secretd tx register auth attestation_cert.der --from a --gas-prices 0.25uscrt -y

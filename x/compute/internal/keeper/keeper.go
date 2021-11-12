@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/baseapp"
+	codedctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
 	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
@@ -56,11 +57,25 @@ type MsgServiceRouter interface {
 
 // NewKeeper creates a new contract Keeper instance
 // If customEncoders is non-nil, we can use this to override some of the message handler, especially custom
-func NewKeeper(cdc codec.Codec, legacyAmino codec.LegacyAmino, storeKey sdk.StoreKey, accountKeeper authkeeper.AccountKeeper,
-	bankKeeper bankkeeper.Keeper, govKeeper govkeeper.Keeper, distKeeper distrkeeper.Keeper, mintKeeper mintkeeper.Keeper, stakingKeeper stakingkeeper.Keeper,
+func NewKeeper(
+	cdc codec.Codec,
+	legacyAmino codec.LegacyAmino,
+	storeKey sdk.StoreKey,
+	accountKeeper authkeeper.AccountKeeper,
+	bankKeeper bankkeeper.Keeper,
+	govKeeper govkeeper.Keeper,
+	distKeeper distrkeeper.Keeper,
+	mintKeeper mintkeeper.Keeper,
+	stakingKeeper stakingkeeper.Keeper,
 	//serviceRouter MsgServiceRouter,
-	router sdk.Router, homeDir string, wasmConfig *types.WasmConfig, supportedFeatures string, customEncoders *MessageEncoders, customPlugins *QueryPlugins) Keeper {
-	wasmer, err := wasm.NewWasmer(filepath.Join(homeDir, "wasm"), supportedFeatures, wasmConfig.CacheSize)
+	router sdk.Router,
+	homeDir string,
+	wasmConfig *types.WasmConfig,
+	supportedFeatures string,
+	customEncoders *MessageEncoders,
+	customPlugins *QueryPlugins,
+) Keeper {
+	wasmer, err := wasm.NewWasmer(filepath.Join(homeDir, "wasm"), supportedFeatures, wasmConfig.CacheSize, wasmConfig.EnclaveCacheSize)
 	if err != nil {
 		panic(err)
 	}
@@ -193,7 +208,7 @@ func (k Keeper) GetSignerInfo(ctx sdk.Context, signer sdk.AccAddress) ([]byte, s
 	signingData := authsigning.SignerData{
 		ChainID:       ctx.ChainID(),
 		AccountNumber: signerAcc.GetAccountNumber(),
-		Sequence:      signerAcc.GetSequence(),
+		Sequence:      signerAcc.GetSequence() - 1,
 	}
 
 	protobufTx := authtx.WrapTx(&tx).GetTx()
@@ -236,7 +251,11 @@ func (k Keeper) GetSignerInfo(ctx sdk.Context, signer sdk.AccAddress) ([]byte, s
 
 	var pkBytes []byte
 	pubKey := pubKeys[pkIndex]
-	pkBytes, err = k.cdc.Marshal(pubKey.(codec.ProtoMarshaler))
+	anyPubKey, err := codedctypes.NewAnyWithValue(pubKey)
+	if err != nil {
+		return nil, 0, nil, nil, nil, sdkerrors.Wrap(types.ErrSigFailed, "couldn't turn public key into Any")
+	}
+	pkBytes, err = k.cdc.Marshal(anyPubKey)
 	if err != nil {
 		return nil, 0, nil, nil, nil, sdkerrors.Wrap(types.ErrSigFailed, "couldn't marshal public key")
 	}
@@ -576,7 +595,15 @@ func (k Keeper) QuerySmart(ctx sdk.Context, contractAddr sdk.AccAddress, req []b
 	// 0x01 | codeID (uint64) -> ContractInfo
 	contractKey := store.Get(types.GetContractEnclaveKey(contractAddr))
 
-	queryResult, gasUsed, qErr := k.wasmer.Query(codeInfo.CodeHash, append(contractKey[:], req[:]...), prefixStore, cosmwasmAPI, querier, gasMeter(ctx), gasForContract(ctx))
+	params := types.NewEnv(
+		ctx,
+		sdk.AccAddress{}, /* empty because it's unused in queries */
+		[]sdk.Coin{},     /* empty because it's unused in queries */
+		contractAddr,
+		contractKey,
+	)
+
+	queryResult, gasUsed, qErr := k.wasmer.Query(codeInfo.CodeHash, params, req, prefixStore, cosmwasmAPI, querier, gasMeter(ctx), gasForContract(ctx))
 	consumeGas(ctx, gasUsed)
 
 	if qErr != nil {
@@ -671,14 +698,33 @@ func (k Keeper) setContractInfo(ctx sdk.Context, contractAddress sdk.AccAddress,
 	store.Set(types.GetContractAddressKey(contractAddress), k.cdc.MustMarshal(contract))
 }
 
-func (k Keeper) IterateContractInfo(ctx sdk.Context, cb func(sdk.AccAddress, types.ContractInfo) bool) {
+func (k Keeper) setContractCustomInfo(ctx sdk.Context, contractAddress sdk.AccAddress, contract *types.ContractCustomInfo) {
+	store := ctx.KVStore(k.storeKey)
+	store.Set(types.GetContractEnclaveKey(contractAddress), contract.EnclaveKey)
+	//println(fmt.Sprintf("Setting enclave key: %x: %x\n", types.GetContractEnclaveKey(contractAddress), contract.EnclaveKey))
+	store.Set(types.GetContractLabelPrefix(contract.Label), contractAddress)
+	//println(fmt.Sprintf("Setting label: %x: %x\n", types.GetContractLabelPrefix(contract.Label), contractAddress))
+}
+
+func (k Keeper) IterateContractInfo(ctx sdk.Context, cb func(sdk.AccAddress, types.ContractInfo, types.ContractCustomInfo) bool) {
+
 	prefixStore := prefix.NewStore(ctx.KVStore(k.storeKey), types.ContractKeyPrefix)
 	iter := prefixStore.Iterator(nil, nil)
 	for ; iter.Valid(); iter.Next() {
 		var contract types.ContractInfo
 		k.cdc.MustUnmarshal(iter.Value(), &contract)
+
+		enclaveId := ctx.KVStore(k.storeKey).Get(types.GetContractEnclaveKey(iter.Key()))
+		//println(fmt.Sprintf("Setting enclave key: %x: %x\n", types.GetContractEnclaveKey(iter.Key()), enclaveId))
+		//println(fmt.Sprintf("Setting label: %x: %x\n", types.GetContractLabelPrefix(contract.Label), contract.Label))
+
+		contractCustomInfo := types.ContractCustomInfo{
+			EnclaveKey: enclaveId,
+			Label:      contract.Label,
+		}
+
 		// cb returns true to stop early
-		if cb(iter.Key(), contract) {
+		if cb(iter.Key(), contract, contractCustomInfo) {
 			break
 		}
 	}
@@ -834,7 +880,7 @@ func (k Keeper) importAutoIncrementID(ctx sdk.Context, lastIDKey []byte, val uin
 	return nil
 }
 
-func (k Keeper) importContract(ctx sdk.Context, contractAddr sdk.AccAddress, c *types.ContractInfo, state []types.Model) error {
+func (k Keeper) importContract(ctx sdk.Context, contractAddr sdk.AccAddress, customInfo *types.ContractCustomInfo, c *types.ContractInfo, state []types.Model) error {
 	if !k.containsCodeInfo(ctx, c.CodeID) {
 		return sdkerrors.Wrapf(types.ErrNotFound, "code id: %d", c.CodeID)
 	}
@@ -844,6 +890,7 @@ func (k Keeper) importContract(ctx sdk.Context, contractAddr sdk.AccAddress, c *
 
 	// historyEntry := c.ResetFromGenesis(ctx)
 	// k.appendToContractHistory(ctx, contractAddr, historyEntry)
+	k.setContractCustomInfo(ctx, contractAddr, customInfo)
 	k.setContractInfo(ctx, contractAddr, c)
 	return k.importContractState(ctx, contractAddr, state)
 }

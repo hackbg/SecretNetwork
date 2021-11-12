@@ -16,7 +16,7 @@ import {
   StdTx,
   WasmData,
 } from "./types";
-import {sleep} from "@iov/utils";
+import { sleep } from "@iov/utils";
 
 export interface CosmosSdkAccount {
   /** Bech32 account address */
@@ -286,7 +286,7 @@ function parseAxiosError(err: AxiosError): never {
 
 export class RestClient {
   private readonly client: AxiosInstance;
-  private readonly broadcastMode: BroadcastMode;
+  public readonly broadcastMode: BroadcastMode;
   public enigmautils: SecretUtils;
 
   public codeHashCache: Map<string | number, string>;
@@ -521,8 +521,18 @@ export class RestClient {
    * Makes a smart query on the contract and parses the reponse as JSON.
    * Throws error if no such contract exists, the query format is invalid or the response is invalid.
    */
-  public async queryContractSmart(address: string, query: object, addedParams?: object): Promise<JsonObject> {
-    const contractCodeHash = await this.getCodeHashByContractAddr(address);
+  public async queryContractSmart(
+    contractAddress: string,
+    query: object,
+    addedParams?: object,
+    contractCodeHash?: string,
+  ): Promise<JsonObject> {
+    if (!contractCodeHash) {
+      contractCodeHash = await this.getCodeHashByContractAddr(contractAddress);
+    } else {
+      this.codeHashCache.set(contractAddress, contractCodeHash);
+    }
+
     const encrypted = await this.enigmautils.encrypt(contractCodeHash, query);
     const nonce = encrypted.slice(0, 32);
 
@@ -531,7 +541,7 @@ export class RestClient {
     // @ts-ignore
     const paramString = new URLSearchParams(addedParams).toString();
 
-    const path = `/wasm/contract/${address}/query/${encoded}?encoding=hex&${paramString}`;
+    const path = `/wasm/contract/${contractAddress}/query/${encoded}?encoding=hex&${paramString}`;
 
     let responseData;
     try {
@@ -631,7 +641,6 @@ export class RestClient {
   }
 
   public async decryptTxsResponse(txsResponse: TxsResponse): Promise<TxsResponse> {
-
     let dataFields = undefined;
     let data = Uint8Array.from([]);
     if (txsResponse.data) {
@@ -668,21 +677,25 @@ export class RestClient {
         );
 
         if (msg.type === "wasm/MsgExecuteContract") {
+          // decrypt input
           (txsResponse.tx.value.msg[i] as MsgExecuteContract).value.msg = inputMsg;
+
+          // decrypt output data
+          // stupid workaround because only 1st message data is returned
+          if (dataFields && i == 0 && dataFields[0].data) {
+            data = await this.decryptDataField(Encoding.toHex(Encoding.fromBase64(dataFields[0].data)), [
+              nonce,
+            ]);
+          }
         } else if (msg.type === "wasm/MsgInstantiateContract") {
+          // decrypt input
           (txsResponse.tx.value.msg[i] as MsgInstantiateContract).value.init_msg = inputMsg;
         }
 
-        // stupid workaround because only 1st message data is returned
-        if (dataFields && i == 0 && dataFields[0].data) {
-          data = await this.decryptDataField(Encoding.toHex(Encoding.fromBase64(dataFields[0].data)), [nonce]);
-        }
-
-        // decrypt output
-
+        // decrypt output logs
         if (txsResponse.logs && logs) {
           if (!txsResponse.logs[i]?.log) {
-            logs[i].log = '';
+            logs[i].log = "";
           }
           logs[i] = (await this.decryptLogs([txsResponse.logs[i]], [nonce]))[0];
         }
@@ -703,7 +716,6 @@ export class RestClient {
 
           txsResponse.raw_log = txsResponse.raw_log.replace(errorCipherB64, Encoding.fromUtf8(errorPlainBz));
         }
-
       }
     }
 

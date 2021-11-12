@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use log::*;
 
 use enclave_ffi_types::EnclaveError;
@@ -7,7 +6,7 @@ use crate::cosmwasm::types::{CanonicalAddr, Coin, Env, HumanAddr};
 use crate::crypto::traits::PubKey;
 use crate::crypto::{sha_256, AESKey, Hmac, Kdf, HASH_SIZE, KEY_MANAGER};
 use crate::wasm::io;
-use crate::wasm::types::{SecretMessage, StdSignDoc};
+use crate::wasm::types::{ContractCode, SecretMessage, StdSignDoc};
 
 use super::types::{CosmWasmMsg, CosmosPubKey, SigInfo, SignDoc};
 
@@ -19,12 +18,10 @@ const HEX_ENCODED_HASH_SIZE: usize = HASH_SIZE * 2;
 
 pub fn generate_encryption_key(
     env: &Env,
-    contract: &[u8],
+    contract_hash: [u8; HASH_SIZE],
     contract_address: &[u8],
 ) -> Result<[u8; CONTRACT_KEY_LENGTH], EnclaveError> {
     let consensus_state_ikm = KEY_MANAGER.get_consensus_state_ikm().unwrap();
-
-    let contract_hash = calc_contract_hash(contract);
 
     let (_, sender_address_u5) = bech32::decode(env.message.sender.as_str()).map_err(|err| {
         warn!(
@@ -105,8 +102,8 @@ pub fn calc_contract_hash(contract_bytes: &[u8]) -> [u8; HASH_SIZE] {
 
 pub fn validate_contract_key(
     contract_key: &[u8; CONTRACT_KEY_LENGTH],
-    contract_address: &[u8],
-    contract_code: &[u8],
+    contract_address: &CanonicalAddr,
+    contract_code: &ContractCode,
 ) -> bool {
     // parse contract key -> < signer_id || authentication_code >
     let mut signer_id: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
@@ -114,9 +111,6 @@ pub fn validate_contract_key(
 
     let mut expected_authentication_id: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
     expected_authentication_id.copy_from_slice(&contract_key[HASH_SIZE..]);
-
-    // calculate contract hash
-    let contract_hash = calc_contract_hash(contract_code);
 
     // get the enclave key
     let enclave_key = KEY_MANAGER
@@ -128,20 +122,22 @@ pub fn validate_contract_key(
         .unwrap();
 
     // calculate the authentication_id
-    let calculated_authentication_id =
-        generate_contract_id(&enclave_key, &signer_id, &contract_hash, contract_address);
+    let calculated_authentication_id = generate_contract_id(
+        &enclave_key,
+        &signer_id,
+        &contract_code.hash(),
+        contract_address.as_slice(),
+    );
 
     calculated_authentication_id == expected_authentication_id
 }
 
 /// Validate that the message sent to the enclave (after decryption) was actually addressed to this contract.
-pub fn validate_msg(msg: &[u8], contract_code: &[u8]) -> Result<Vec<u8>, EnclaveError> {
+pub fn validate_msg(msg: &[u8], contract_hash: [u8; HASH_SIZE]) -> Result<Vec<u8>, EnclaveError> {
     if msg.len() < HEX_ENCODED_HASH_SIZE {
         warn!("Malformed message - expected contract code hash to be prepended to the msg");
         return Err(EnclaveError::ValidationFailure);
     }
-
-    let calc_contract_hash = calc_contract_hash(contract_code);
 
     let mut received_contract_hash: [u8; HEX_ENCODED_HASH_SIZE] = [0u8; HEX_ENCODED_HASH_SIZE];
     received_contract_hash.copy_from_slice(&msg[0..HEX_ENCODED_HASH_SIZE]);
@@ -151,7 +147,7 @@ pub fn validate_msg(msg: &[u8], contract_code: &[u8]) -> Result<Vec<u8>, Enclave
         EnclaveError::ValidationFailure
     })?;
 
-    if decoded_hash != calc_contract_hash {
+    if decoded_hash != contract_hash {
         warn!("Message contains mismatched contract hash");
         return Err(EnclaveError::ValidationFailure);
     }
@@ -162,56 +158,53 @@ pub fn validate_msg(msg: &[u8], contract_code: &[u8]) -> Result<Vec<u8>, Enclave
 /// Verify all the parameters sent to the enclave match up, and were signed by the right account.
 pub fn verify_params(
     sig_info: &SigInfo,
-    _env: &Env,
-    _msg: &SecretMessage,
+    env: &Env,
+    msg: &SecretMessage,
 ) -> Result<(), EnclaveError> {
     info!("Verifying message signatures for: {:?}", sig_info);
 
-    info!("Skipping validation temporarily");
-    Ok(())
+    // If there's no callback signature - it's not a callback and there has to be a tx signer + signature
+    if let Some(callback_sig) = &sig_info.callback_sig {
+        return verify_callback_sig(
+            callback_sig.as_slice(),
+            &env.message.sender,
+            msg,
+            &env.message.sent_funds,
+        );
+    }
 
-    // // If there's no callback signature - it's not a callback and there has to be a tx signer + signature
-    // if let Some(callback_sig) = &sig_info.callback_sig {
-    //     return verify_callback_sig(
-    //         callback_sig.as_slice(),
-    //         &env.message.sender,
-    //         msg,
-    //         &env.message.sent_funds,
-    //     );
-    // } else {
-    //     trace!(
-    //         "Sign bytes are: {:?}",
-    //         String::from_utf8_lossy(sig_info.sign_bytes.as_slice())
-    //     );
-    //
-    //     let (sender_public_key, messages) = get_signer_and_messages(sig_info, env)?;
-    //
-    //     trace!(
-    //         "sender public key is: {:?}",
-    //         sender_public_key.get_address().0
-    //     );
-    //     trace!("sender signature is: {:?}", sig_info.signature);
-    //     trace!("sign bytes are: {:?}", sig_info.sign_bytes);
-    //
-    //     sender_public_key
-    //         .verify_bytes(
-    //             sig_info.sign_bytes.as_slice(),
-    //             sig_info.signature.as_slice(),
-    //         )
-    //         .map_err(|err| {
-    //             warn!("Signature verification failed: {:?}", err);
-    //             EnclaveError::FailedTxVerification
-    //         })?;
-    //
-    //     if verify_message_params(&messages, env, &sender_public_key, msg) {
-    //         info!("Parameters verified successfully");
-    //         return Ok(());
-    //     }
-    //
-    //     warn!("Parameter verification failed");
-    // }
-    //
-    // Err(EnclaveError::FailedTxVerification)
+    trace!(
+        "Sign bytes are: {:?}",
+        String::from_utf8_lossy(sig_info.sign_bytes.as_slice())
+    );
+
+    let (sender_public_key, messages) = get_signer_and_messages(sig_info, env)?;
+
+    trace!(
+        "sender canonical address is: {:?}",
+        sender_public_key.get_address().0.0
+    );
+    trace!("sender signature is: {:?}", sig_info.signature);
+    trace!("sign bytes are: {:?}", sig_info.sign_bytes);
+
+    sender_public_key
+        .verify_bytes(
+            sig_info.sign_bytes.as_slice(),
+            sig_info.signature.as_slice(),
+        )
+        .map_err(|err| {
+            warn!("Signature verification failed: {:?}", err);
+            EnclaveError::FailedTxVerification
+        })?;
+
+    if verify_message_params(&messages, env, &sender_public_key, msg) {
+        info!("Parameters verified successfully");
+        return Ok(());
+    }
+
+    warn!("Parameter verification failed");
+
+    Err(EnclaveError::FailedTxVerification)
 }
 
 fn get_signer_and_messages(
@@ -246,18 +239,18 @@ fn get_signer_and_messages(
             Ok((sender_public_key.clone(), sign_doc.body.messages))
         }
         SIGN_MODE_LEGACY_AMINO_JSON => {
+            use protobuf::well_known_types::Any as AnyProto;
             use protobuf::Message;
-            let mode_info =
-                crate::proto::tx::tx::ModeInfo::parse_from_bytes(sign_info.mode_info.as_slice())
-                    .map_err(|err| {
-                        warn!("failure to parse mode info: {:?}", err);
-                        EnclaveError::FailedTxVerification
-                    })?;
-            let public_key =
-                CosmosPubKey::from_proto(mode_info, &sign_info.public_key.0).map_err(|err| {
-                    warn!("failure to parse pubkey: {:?}", err);
+
+            let any_pub_key =
+                AnyProto::parse_from_bytes(&sign_info.public_key.0).map_err(|err| {
+                    warn!("failed to parse public key as Any: {:?}", err);
                     EnclaveError::FailedTxVerification
                 })?;
+            let public_key = CosmosPubKey::from_proto(&any_pub_key).map_err(|err| {
+                warn!("failure to parse pubkey: {:?}", err);
+                EnclaveError::FailedTxVerification
+            })?;
             let sign_doc: StdSignDoc = serde_json::from_slice(sign_info.sign_bytes.as_slice())
                 .map_err(|err| {
                     warn!("failure to parse StdSignDoc: {:?}", err);

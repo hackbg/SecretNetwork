@@ -3,6 +3,7 @@ VERSION ?= $(shell echo $(shell git describe --tags) | sed 's/^v//')
 COMMIT := $(shell git log -1 --format='%H')
 CURRENT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 DOCKER := $(shell which docker)
+DOCKER_BUF := $(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace bufbuild/buf
 
 LEDGER_ENABLED ?= true
 BINDIR ?= $(GOPATH)/bin
@@ -121,14 +122,12 @@ xgo_build_secretcli: go.sum
 	xgo --image techknowlogick/xgo:go-1.15.x --targets $(XGO_TARGET) -tags="$(GO_TAGS) secretcli" -ldflags '$(LD_FLAGS)' --branch "$(CURRENT_BRANCH)" github.com/enigmampc/SecretNetwork/cmd/secretd
 
 build_local_no_rust: bin-data-$(IAS_BUILD)
-	cp go-cosmwasm/target/release/libgo_cosmwasm.so go-cosmwasm/api
+	cp go-cosmwasm/target/$(BUILD_PROFILE)/libgo_cosmwasm.so go-cosmwasm/api
 	go build -mod=readonly -tags "$(GO_TAGS)" -ldflags '$(LD_FLAGS)' ./cmd/secretd
 
-build-linux: vendor bin-data-$(IAS_BUILD)
+build-linux: _build-linux build_local_no_rust build_cli
+_build-linux: vendor
 	BUILD_PROFILE=$(BUILD_PROFILE) $(MAKE) -C go-cosmwasm build-rust
-	cp go-cosmwasm/target/$(BUILD_PROFILE)/libgo_cosmwasm.so go-cosmwasm/api
-#   this pulls out ELF symbols, 80% size reduction!
-	go build -mod=readonly -tags "$(GO_TAGS)" -ldflags '$(LD_FLAGS)' ./cmd/secretd
 
 build_windows_cli:
 	$(MAKE) xgo_build_secretcli XGO_TARGET=windows/amd64
@@ -153,8 +152,8 @@ deb-no-compile:
 	rm -rf /tmp/SecretNetwork
 
 	mkdir -p /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)
-	mv -f ./secretcli /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretcli
-	mv -f ./secretd /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretd
+	cp -f ./secretcli /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretcli
+	cp -f ./secretd /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretd
 	chmod +x /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretd /tmp/SecretNetwork/deb/$(DEB_BIN_DIR)/secretcli
 
 	mkdir -p /tmp/SecretNetwork/deb/$(DEB_LIB_DIR)
@@ -215,6 +214,15 @@ clean:
 build-dev-image:
 	docker build --build-arg BUILD_VERSION=${VERSION} --build-arg SGX_MODE=SW --build-arg FEATURES= -f deployment/dockerfiles/base.Dockerfile -t rust-go-base-image .
 	docker build --build-arg SGX_MODE=SW --build-arg SECRET_NODE_TYPE=BOOTSTRAP -f deployment/dockerfiles/release.Dockerfile -t enigmampc/secret-network-sw-dev:${DOCKER_TAG} .
+
+build-custom-dev-image:
+    # .dockerignore excludes .so files so we rename these so that the dockerfile can find them
+	cd go-cosmwasm/api && cp libgo_cosmwasm.so libgo_cosmwasm.so.x
+	cd cosmwasm/packages/wasmi-runtime && cp librust_cosmwasm_enclave.signed.so librust_cosmwasm_enclave.signed.so.x
+	docker build --build-arg SGX_MODE=SW --build-arg SECRET_NODE_TYPE=BOOTSTRAP -f deployment/dockerfiles/custom-node.Dockerfile -t enigmampc/secret-network-sw-dev-custom-bootstrap:${DOCKER_TAG} .
+	docker build --build-arg SGX_MODE=SW --build-arg SECRET_NODE_TYPE=NODE -f deployment/dockerfiles/custom-node.Dockerfile -t enigmampc/secret-network-sw-dev-custom-node:${DOCKER_TAG} .
+    # delete the copies created above
+	rm go-cosmwasm/api/libgo_cosmwasm.so.x cosmwasm/packages/wasmi-runtime/librust_cosmwasm_enclave.signed.so.x
 
 build-testnet: docker_base
 	@mkdir build 2>&3 || true
@@ -295,7 +303,7 @@ go-tests: build-test-contract
 	cp ./cosmwasm/packages/wasmi-runtime/librust_cosmwasm_enclave.signed.so ./x/compute/internal/keeper
 	rm -rf ./x/compute/internal/keeper/.sgx_secrets
 	mkdir -p ./x/compute/internal/keeper/.sgx_secrets
-	SGX_MODE=SW go test -timeout 1200s -p 1 -v ./x/compute/internal/... $(GO_TEST_ARGS)
+	SGX_MODE=SW SCRT_SGX_STORAGE='./' go test -timeout 1200s -p 1 -v ./x/compute/internal/... $(GO_TEST_ARGS)
 
 go-tests-hw: build-test-contract
 	# empty BUILD_PROFILE means debug mode which compiles faster
@@ -305,6 +313,9 @@ go-tests-hw: build-test-contract
 	mkdir -p ./x/compute/internal/keeper/.sgx_secrets
 	SGX_MODE=HW go test -p 1 -v ./x/compute/internal/... $(GO_TEST_ARGS)
 
+# When running this more than once, after the first time you'll want to remove the contents of the `ffi-types`
+# rule in the Makefile in `wasmi-runtime`. This is to speed up the compilation time of tests and speed up the
+# test debugging process in general.
 .PHONY: enclave-tests
 enclave-tests:
 	$(MAKE) -C cosmwasm/packages/enclave-test run
@@ -366,6 +377,12 @@ secretjs-build:
 secretjs-publish-npm: secretjs-build
 	cd cosmwasm-js/packages/sdk && npm publish
 
+# Before running this, first make sure:
+# 1. To `npm login` with enigma-dev
+# 2. The new version is updated in `cosmwasm-js/packages/sdk/package.json`
+secretjs-publish-beta-npm: secretjs-build
+	cd cosmwasm-js/packages/sdk && npm publish --tag beta
+
 aesm-image:
 	docker build -f deployment/dockerfiles/aesm.Dockerfile -t enigmampc/aesm .
 
@@ -380,7 +397,7 @@ aesm-image:
 # ref: https://github.com/golang/go/issues/30515
 statik:
 	@echo "Installing statik..."
-	@(cd /tmp && go get github.com/rakyll/statik@v0.1.6)
+	@(cd /tmp && GO111MODULE=on go get github.com/rakyll/statik@v0.1.6)
 
 
 update-swagger-docs: statik
@@ -408,12 +425,16 @@ update-swagger-docs: statik
 
 # proto-check-breaking:
 #	@buf check breaking --against-input '.git#branch=master'
+
+protoVer=v0.2
+
 proto-all: proto-format proto-lint proto-gen
 
 proto-gen:
 	@echo "Generating Protobuf files"
-	$(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace tendermintdev/sdk-proto-gen sh ./scripts/protocgen.sh
+	$(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace tendermintdev/sdk-proto-gen:$(protoVer) sh ./scripts/protocgen.sh
 
+# This one doesn't work and i can't find the right docker repo
 proto-format:
 	@echo "Formatting Protobuf files"
 	$(DOCKER) run --rm -v $(CURDIR):/workspace \
@@ -421,7 +442,7 @@ proto-format:
 	find ./ -not -path "./third_party/*" -name *.proto -exec clang-format -i {} \;
 
 proto-swagger-gen:
-	$(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace tendermintdev/sdk-proto-gen sh ./scripts/protoc-swagger-gen.sh
+	$(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace tendermintdev/sdk-proto-gen:$(protoVer) ./scripts/protoc-swagger-gen.sh
 
 proto-lint:
 	@$(DOCKER_BUF) lint --error-format=json
