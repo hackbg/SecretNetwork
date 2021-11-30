@@ -94,7 +94,12 @@ RustEnclave_Link_Flags := -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfi
 
 Rust_Crate_Source := $(shell find -type f | grep -vP '(\.so|\.o|\.a)$$' | grep -vP '^\./target' | grep -v Enclave_t)
 Rust_Target_Path := $(CURDIR)/xargo
-Rust_Flags := "-Z force-unstable-if-unmarked -C target-cpu=skylake"
+
+ifeq ($(SGX_MODE), SW)
+	Rust_Flags := "-Z force-unstable-if-unmarked -C target-feature=+aes,+ssse3"
+else
+	Rust_Flags := "-Z force-unstable-if-unmarked -C target-cpu=skylake"
+endif
 
 .PHONY: all
 all: enclave
@@ -102,11 +107,16 @@ all: enclave
 .PHONY: enclave
 enclave: ffi-types librust_cosmwasm_enclave.signed.so
 
+.PHONY: ffi-types
 ffi-types:
 	mkdir -p target/headers/
 	cd ../enclave-ffi-types && \
 	RUST_TARGET_PATH=$(Rust_Target_Path) RUSTFLAGS=$(Rust_Flags) xargo build --features "build_headers" --target x86_64-unknown-linux-sgx -Z unstable-options --profile $(BUILD_PROFILE) && \
 	cp $(Rust_Target_Path)/../../../target/headers/enclave-ffi-types.h $(Rust_Target_Path)/../target/headers/
+
+.PHONY: build-protobuf
+build-protobuf:
+	RUST_BACKTRACE=1 RUST_TARGET_PATH=$(Rust_Target_Path) RUSTFLAGS=$(Rust_Flags) xargo check --features='build-protobuf' --target x86_64-unknown-linux-sgx
 
 librust_cosmwasm_enclave.signed.so: librust_cosmwasm_enclave.so $(ENCLAVE_CONFIG)
 	sgx_sign sign -key Enclave_private.pem -enclave $< -out $@ -config $(ENCLAVE_CONFIG)
@@ -115,7 +125,7 @@ librust_cosmwasm_enclave.so: $(CUSTOM_LIBRARY_PATH)/libenclave.a Enclave_t.o
 	$(CXX) Enclave_t.o -o $@ $(RustEnclave_Link_Flags)
 
 $(CUSTOM_LIBRARY_PATH)/libenclave.a: $(CUSTOM_LIBRARY_PATH) $(Rust_Crate_Source)
-	RUST_TARGET_PATH=$(Rust_Target_Path) RUSTFLAGS=$(Rust_Flags) xargo build --features "$(FEATURES)" --target x86_64-unknown-linux-sgx -Z unstable-options --profile $(BUILD_PROFILE)
+	RUST_TARGET_PATH=$(Rust_Target_Path) RUSTFLAGS=$(Rust_Flags) xargo build --features "$(FEATURES)" --target x86_64-unknown-linux-sgx -Z unstable-options --profile $(BUILD_PROFILE) --locked
 	cp target/x86_64-unknown-linux-sgx/$(BUILD_PROFILE)/libwasmi_runtime_enclave.a $(CUSTOM_LIBRARY_PATH)/libenclave.a
 
 $(CUSTOM_LIBRARY_PATH):

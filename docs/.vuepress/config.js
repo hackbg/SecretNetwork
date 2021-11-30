@@ -63,6 +63,10 @@ module.exports = {
             title: "SecretJS",
             path: "/dev/secret-js",
           },
+          {
+            title: "Tutorials",
+            path: "/dev/tutorials.md",
+          },
         ],
       },
       {
@@ -74,45 +78,6 @@ module.exports = {
             title: "Secret Light Client",
             path: "/validators-and-full-nodes/secretcli",
             sidebarDepth: 1,
-          },
-          {
-            title: "Validators",
-            path: "/validators-and-full-nodes/secret-nodes",
-            sidebarDepth: 1,
-            children: [
-              {
-                title: "Setup SGX",
-                path: "/validators-and-full-nodes/setup-sgx",
-              },
-              {
-                title: "Run a Full Node",
-                path: "/validators-and-full-nodes/run-full-node-mainnet",
-              },
-              {
-                title: "Join as a Validator",
-                path: "/validators-and-full-nodes/join-validator-mainnet",
-              },
-              {
-                title: "Backup a Validator",
-                path: "/validators-and-full-nodes/backup-a-validator",
-              },
-              {
-                title: "Migrate a Validator",
-                path: "/validators-and-full-nodes/migrate-a-validator",
-              },
-              {
-                title: "Sentry Nodes",
-                path: "/validators-and-full-nodes/sentry-nodes",
-              },
-              {
-                title: "Active Node Peers",
-                //path: '/validators-and-full-nodes/active-node-peers'
-              },
-              {
-                title: "Vulcan Netwrok Upgrade",
-                path: "/upgrade-secret-1-to-secret-2",
-              },
-            ],
           },
           {
             title: "Delegators",

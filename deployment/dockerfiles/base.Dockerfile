@@ -9,8 +9,8 @@ ENV GOROOT=/usr/local/go
 ENV GOPATH=/go/
 ENV PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
 
-RUN curl -O https://dl.google.com/go/go1.15.5.linux-amd64.tar.gz
-RUN tar -C /usr/local -xzf go1.15.5.linux-amd64.tar.gz
+RUN curl -O https://dl.google.com/go/go1.15.15.linux-amd64.tar.gz
+RUN tar -C /usr/local -xzf go1.15.15.linux-amd64.tar.gz
 RUN go get -u github.com/jteeuwen/go-bindata/...
 
 RUN wget -q https://github.com/WebAssembly/wabt/releases/download/1.0.20/wabt-1.0.20-ubuntu.tar.gz && \
@@ -39,7 +39,7 @@ COPY cosmwasm cosmwasm/
 
 WORKDIR /go/src/github.com/enigmampc/SecretNetwork/
 
-COPY Makefile Makefile
+COPY deployment/docker/MakefileCopy Makefile
 
 # RUN make clean
 RUN make vendor
@@ -58,6 +58,13 @@ RUN . /opt/sgxsdk/environment && env && MITIGATION_CVE_2020_0551=LOAD VERSION=${
 # Set working directory for the build
 WORKDIR /go/src/github.com/enigmampc/SecretNetwork
 
+#RUN rustup target add wasm32-unknown-unknown
+#
+#COPY install-wasm-tools.sh .
+#RUN ./install-wasm-tools.sh
+
+# RUN make build-test-contract
+
 # Add source files
 COPY go-cosmwasm go-cosmwasm
 # This is due to some esoteric docker bug with the underlying filesystem, so until I figure out a better way, this should be a workaround
@@ -66,17 +73,17 @@ COPY x x
 RUN true
 COPY types types
 RUN true
-COPY app.go .
+COPY app app
 COPY go.mod .
 COPY go.sum .
 COPY cmd cmd
 COPY Makefile .
 RUN true
-COPY install-wasm-tools.sh .
-
+COPY client client
 # COPY /go/src/github.com/enigmampc/SecretNetwork/go-cosmwasm/libgo_cosmwasm.so go-cosmwasm/api
 
 RUN . /opt/sgxsdk/environment && env && MITIGATION_CVE_2020_0551=LOAD VERSION=${VERSION} FEATURES=${FEATURES} SGX_MODE=${SGX_MODE} make build_local_no_rust
+RUN . /opt/sgxsdk/environment && env && MITIGATION_CVE_2020_0551=LOAD VERSION=${VERSION} FEATURES=${FEATURES} SGX_MODE=${SGX_MODE} make build_cli
 
 RUN rustup target add wasm32-unknown-unknown && make build-test-contract
 
@@ -85,10 +92,12 @@ RUN rustup target add wasm32-unknown-unknown && make build-test-contract
 # RUN cp /opt/sgxsdk/lib64/libsgx_uae_service_sim.so /usr/lib/libsgx_uae_service_sim.so
 # RUN cp /go/src/github.com/enigmampc/SecretNetwork/go-cosmwasm/target/release/libgo_cosmwasm.so /usr/lib/libgo_cosmwasm.so
 # RUN cp /go/src/github.com/enigmampc/SecretNetwork/go-cosmwasm/librust_cosmwasm_enclave.signed.so /usr/lib/librust_cosmwasm_enclave.signed.so
-RUN cp /go/src/github.com/enigmampc/SecretNetwork/cosmwasm/packages/wasmi-runtime/librust_cosmwasm_enclave.signed.so x/compute/internal/keeper
-RUN mkdir -p /go/src/github.com/enigmampc/SecretNetwork/x/compute/internal/keeper/.sgx_secrets
+# RUN cp /go/src/github.com/enigmampc/SecretNetwork/cosmwasm/packages/wasmi-runtime/librust_cosmwasm_enclave.signed.so x/compute/internal/keeper
+# RUN mkdir -p /go/src/github.com/enigmampc/SecretNetwork/x/compute/internal/keeper/.sgx_secrets
 
-COPY deployment/ci/go-tests.sh .
-RUN chmod +x go-tests.sh
+#COPY deployment/ci/go-tests.sh .
+#
+#RUN chmod +x go-tests.sh
 
-ENTRYPOINT ["/bin/bash", "go-tests.sh"]
+# ENTRYPOINT ["/bin/bash", "go-tests.sh"]
+ENTRYPOINT ["/bin/bash"]

@@ -43,7 +43,7 @@ Then transfer funds to address you just created.
 #### 5. Check that you have the funds:
 
 ```bash
-secretcli q account $(secretcli keys show -a <key-alias>)
+secretcli q bank balances $(secretcli keys show -a <key-alias>)
 ```
 
 If you get the following message, it means that you have no tokens yet:
@@ -119,19 +119,10 @@ In order to stake more tokens beyond those in the initial transaction, run:
 secretcli tx staking delegate $(secretcli keys show <key-alias> --bech=val -a) <amount>uscrt --from <key-alias> --gas-prices 0.25uscrt
 ```
 
-### Editing your Validator
+### Renaming your moniker
 
 ```bash
-secretcli tx staking edit-validator
-  --moniker="<new-moniker>" \
-  --website="https://scrt.network" \
-  --identity=6A0D65E29A4CBC8E \
-  --details="To infinity and beyond!" \
-  --chain-id=<chain_id> \
-  --gas="auto" \
-  --gas-prices="0.025uscrt" \
-  --from=<key_name> \
-  --commission-rate="0.10"
+secretcli tx staking edit-validator --moniker <new-moniker> --from <key-alias> --gas-prices 0.25uscrt
 ```
 
 ### Seeing your rewards from being a validator

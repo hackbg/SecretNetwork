@@ -35,13 +35,13 @@ cd ~
 
 wget https://github.com/enigmampc/SecretNetwork/releases/download/v1.0.4/secretnetwork_1.0.4_amd64.deb
 
-echo "97c1aa2421a203184e541928cc9c409c50afcfac5cbd55993e6a9593399587f9 secretnetwork_1.0.4_amd64.deb" | sha256sum --check
+echo "696e0685c0eb08ad6a0ef356f5719b4669695c95c7c5728681ff148747a1ff77 secretnetwork_1.0.4_amd64.deb" | sha256sum --check
 
 sudo apt install ./secretnetwork_1.0.4_amd64.deb
 
 secretd init "$YOUR_MONIKER" --chain-id secret-2
 
-wget -O ~/.secretd/config/genesis.json "https://github.com/enigmampc/SecretNetwork/releases/download/v1.0.4/genesis.json"
+wget -O ~/.secretd/config/genesis.json "https://github.com/enigmampc/SecretNetwork/releases/download/v1.0.0/genesis.json"
 
 echo "4ca53e34afed034d16464d025291fe16a847c9aca0a259f9237413171b19b4cf .secretd/config/genesis.json" | sha256sum --check
 
@@ -53,7 +53,7 @@ secretd validate-genesis
 ```bash
 secretd init-enclave
 
-PUBLIC_KEY=$(secretd parse attestation_cert.der 2> /dev/null | cut -c 3-)
+PUBLIC_KEY=$(secretd parse /opt/secret/.sgx_secrets/attestation_cert.der  2> /dev/null | cut -c 3-)
 echo $PUBLIC_KEY
 ```
 
@@ -61,7 +61,7 @@ echo $PUBLIC_KEY
 
 ```bash
 secretcli config chain-id secret-2
-secretcli config node http://rpc.enigma.co:26657
+secretcli config node tcp://secret-2.node.enigma.co:26657
 secretcli config output json
 secretcli config indent true
 ```
@@ -111,7 +111,7 @@ mkdir -p ~/.secretd/.node
 
 secretd configure-secret node-master-cert.der "$SEED"
 
-perl -i -pe 's/^seeds = ".*?"/seeds = "332c69cb1e5a4a62916be571ff9c4cd09cc71a79\@secret-2.node.enigma.co:26656"/' ~/.secretd/config/config.toml
+perl -i -pe 's/^seeds = ".*?"/seeds = "bee0edb320d50c839349224b9be1575ca4e67948\@secret-2.node.enigma.co:26656"/' ~/.secretd/config/config.toml
 perl -i -pe 's;laddr = "tcp://127.0.0.1:26657";laddr = "tcp://0.0.0.0:26657";' ~/.secretd/config/config.toml
 ```
 
