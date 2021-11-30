@@ -1,4 +1,5 @@
-import { cosmos } from "./ProtoDefs.js";
+import ProtoDefs from "./ProtoDefs.js";
+const { cosmos } = ProtoDefs
 
 // todo: dynamically create this type from protobuf
 export class MsgData {

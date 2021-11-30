@@ -3,10 +3,15 @@ import * as types from "./types";
 export { logs, types };
 
 export { pubkeyToAddress } from "./address";
+
 export { unmarshalTx } from "./decoding";
+
 export { makeSignBytes, marshalTx } from "./encoding";
-export { BroadcastMode, RestClient, TxsResponse } from "./restclient";
-export {
+
+export type { TxsResponse } from "./restclient";
+export { BroadcastMode, RestClient } from "./restclient";
+
+export type {
   Account,
   Block,
   BlockHeader,
@@ -14,7 +19,6 @@ export {
   CodeDetails,
   Contract,
   ContractDetails,
-  CosmWasmClient,
   GetNonceResult,
   IndexedTx,
   PostTxResult,
@@ -25,24 +29,30 @@ export {
   SearchTxQuery,
   SearchTxFilter,
 } from "./cosmwasmclient";
+export { CosmWasmClient } from "./cosmwasmclient";
+
+export type { Pen, PrehashType } from "./pen";
 export {
   makeSecretNetworkPath as makeCosmoshubPath,
   makeSecretNetworkPath,
-  Pen,
-  PrehashType,
   Secp256k1Pen,
 } from "./pen";
+
 export { decodeBech32Pubkey, encodeBech32Pubkey, encodeSecp256k1Pubkey } from "./pubkey";
+
 export { findSequenceForSignedTx } from "./sequence";
+
 export { encodeSecp256k1Signature, decodeSignature } from "./signature";
-export {
+
+export type {
   ExecuteResult,
   FeeTable,
   InstantiateResult,
   SigningCallback,
-  SigningCosmWasmClient,
   UploadMeta,
   UploadResult,
 } from "./signingcosmwasmclient";
+export { SigningCosmWasmClient } from "./signingcosmwasmclient";
+
 import EnigmaUtils from "./enigmautils";
 export { EnigmaUtils };
